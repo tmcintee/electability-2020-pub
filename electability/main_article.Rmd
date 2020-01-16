@@ -1,0 +1,508 @@
+---
+title: "Electability of the Democratic Candidates"
+author: "Tomas McIntee"
+#date: "12/3/2019"
+output: html_document
+---
+First, a baseline model.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(electability)
+require(tidyverse)
+require(Hmisc)
+require(fiftystater)
+require(grid)
+require(gridExtra)
+require(data.table)
+require(DT)
+require(parallel)
+require(foreach)
+require(ggrepel)
+candidate_vector <- c("Joe Biden",
+                      "Bernie Sanders",
+                      "Elizabeth Warren",
+                      "Pete Buttigieg",
+                      "Amy Klobuchar",
+                      "Tom Steyer",
+                      "Tulsi Gabbard",
+                      "Andrew Yang",
+                      "Cory Booker",
+                      "Julian Castro",
+                      "Marianne Williamson",
+                      "Michael Bennet",
+                      "John Delaney",
+                      "Michael Bloomberg",
+                      "Deval Patrick",
+                      "Kamala Harris",
+                      "Beto O'Rourke")
+past_elections <- read.csv("../electoral_history_presidential_candidates.csv",stringsAsFactors = FALSE)
+state_pairs <- read.csv("../State_Adjacency.csv",stringsAsFactors = FALSE)
+new_england <- c("Connecticut","Rhode Island","Massachusetts","New Hampshire","Vermont","Maine")
+confederate_states <- c("Virginia","North Carolina","South Carolina","Georgia","Florida","Alabama","Mississippi","Louisiana","Arkansas","Tennessee","Texas")
+for(i in 1:(length(new_england)-1))
+{
+  for(j in (i+1):length(new_england))
+  {
+    state_pairs <- add_case(state_pairs,State1 = new_england[[i]],State2 = new_england[[j]])
+  }
+}
+for(i in 1:(length(confederate_states)-1))
+{
+  for(j in (i+1):length(confederate_states))
+  {
+    state_pairs <- add_case(state_pairs,State1 = confederate_states[[i]],State2 = confederate_states[[j]])
+  }
+}
+#Note: The filter line below eliminates elections like the 2006 congressional elections for Massachusetts, where the partisan tilt is skewed by uncontested seats.
+#n() > 2 forces the inclusion of states like New Jersey, which have no other corresponding benchmark elections in the same year as Cory Booker's election.
+comparison_sheet <- past_elections %>%
+  group_by(State,Year) %>%
+  filter(!((For ==min(For) | Against == min(Against)) & Plural == 1 & n() > 2)) %>% 
+  mutate(Median_for = median(For),
+         Median_against = median(Against)) %>%
+  mutate(Net_for = For - Median_for,
+         Net_against = Against - Median_against)
+Senate_elections <- read.csv("../Senate elections.csv")
+Senate_2020 <- read.csv("../Senate 2020.csv")
+Senate_2020$Total <-0
+Senate_2020$Democratic <- 0
+Senate_2020$Republican <- 0
+
+#Process to create weights and percentages. Weights will be further modified per category
+Senate_elections <- Senate_elections %>% 
+  mutate(Share.Democratic = Democratic/Total,
+         Share.Republican = Republican/Total,
+         Share.Other = Other/Total,
+         Weight = sqrt(Total)*TimeDecay(Year), #2014 was the previous election for the same senate class.
+         Type = "Senate") %>%
+  filter(Democratic > 0 & Republican > 0)
+Senate_elections$Weight[Senate_elections$Year == 2014] <- Senate_elections$Weight[Senate_elections$Year == 2014]*2
+for(i in 1:nrow(Senate_2020))
+{
+  temp <- Senate_2020$State[[i]]
+  temp <- Senate_elections %>% filter(State == as.character(temp))
+  Senate_2020$Total[[i]] <- max(temp$Total)
+  rm(temp)
+}
+
+Presidential_elections <- read.csv("../Presidential_elections.csv")
+#Process to create weights, percentages, and 
+Presidential_elections <- Presidential_elections %>% 
+  mutate(Share.Democratic = Democratic/Total,
+         Share.Republican = Republican/Total,
+         Share.Other = Other/Total,
+         Weight = sqrt(Total)*TimeDecay(Year),
+         Type = "Presidential")
+
+#Multiplied by 0.5 due to being a different type of race.
+House_2018 <- read.csv("../House_2018.csv")
+House_2018 <- House_2018 %>% 
+  mutate(Share.Democratic = Democratic/Total,
+         Share.Republican = Republican/Total,
+         Share.Other = Other/Total,
+         Weight = sqrt(Total)*TimeDecay(Year),
+         Type = "House")
+
+House_2016 <- read.csv("../House_2016.csv")
+House_2016 <- House_2016 %>% 
+  mutate(Share.Democratic = Democratic/Total,
+         Share.Republican = Republican/Total,
+         Share.Other = Other/Total,
+         Weight = sqrt(Total)*TimeDecay(Year),
+         Type = "House")
+
+
+Base_presidential_model <- ProcessElectionModel(Presidential_elections,
+                                                Presidential_elections %>% filter(Year == 2016))
+Base_senate_model <- ProcessElectionModel(Senate_elections,
+                                          Senate_2020)
+Presidential_model_plus2018 <- LinearElectionModel(bind_rows(Presidential_elections %>% filter(Year != 1992),House_2018),
+                                                      Presidential_elections %>% filter(Year == 2016) %>% mutate(Year = 2020))
+Senate_model_plus2018 <- LinearElectionModel(bind_rows(Senate_elections,House_2018),
+                                          Senate_2020 %>% mutate(Year = 2020))
+
+
+Short_presidential_model <- ProcessElectionModel(Presidential_elections 
+                                                                 %>% filter(Year == 2016),
+                                                      Presidential_elections %>% filter(Year == 2016))
+Short_senate_model <- ProcessElectionModel(Senate_elections %>% filter(Year == 2014 | 
+                                                       Year == 2016 & State %in% c("Arizona","Georgia")|
+                                                         Year == 2017 & State == "Alabama" |
+                                                         Year == 2008 & State == "Kansas"),
+                                          Senate_2020)
+
+Pessimistic_presidential_model <- ProcessElectionModel(Presidential_elections %>%
+                                                   group_by(State) %>%
+                                                   filter(Share.Democratic - Share.Republican == min(Share.Democratic-Share.Republican)) %>%
+                                                     ungroup(),
+                                                 Presidential_elections %>% filter(Year == 2016))
+Pessimistic_senate_model <- ProcessElectionModel(Senate_elections %>%
+                                                   group_by(State) %>%
+                                                   filter(Share.Democratic - Share.Republican == min(Share.Democratic-Share.Republican)) %>%
+                                                     ungroup(),
+                                          Senate_2020)
+Optimistic_presidential_model <- ProcessElectionModel(Presidential_elections %>%
+                                                   group_by(State) %>%                                                   
+                                                     filter(Share.Democratic - Share.Republican == max(Share.Democratic-Share.Republican)) %>%
+                                                     ungroup(),
+                                                 Presidential_elections %>% filter(Year == 2016))
+Optimistic_senate_model <- ProcessElectionModel(Senate_elections %>%
+                                                   group_by(State) %>%
+                                                   filter(Share.Democratic - Share.Republican == max(Share.Democratic-Share.Republican)) %>%
+                                                     ungroup(),
+                                          Senate_2020)
+Trend_presidential_model <- LinearElectionModel(Presidential_elections %>% filter(Year != 1992),
+                                                Presidential_elections %>% filter(Year == 2016) %>% mutate(Year = 2020))
+Trend_senate_model <- LinearElectionModel(Senate_elections,
+                                                Senate_2020 %>% mutate(Year = 2020, Weight = 1))
+Poll_Effects <- ProcessPolls("../polls/president_polls.csv",candidate_vector)
+Past_Effects <- ProcessPastElections("../electoral_history_presidential_candidates.csv",candidate_vector)
+Updates_All <- rbind(as.data.frame(Poll_Effects),as.data.frame(Past_Effects),deparse.level = 0)
+Updated_presidential_models <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Base_presidential_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_senate_models <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Base_senate_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+
+Updated_presidential_models_optimistic <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Optimistic_presidential_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_senate_models_optimistic <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Optimistic_senate_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_presidential_models_pessimistic <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Pessimistic_presidential_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_senate_models_pessimistic <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Pessimistic_senate_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_presidential_models_short <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Short_presidential_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_senate_models_short <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Short_senate_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_presidential_models_2018 <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Presidential_model_plus2018,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+for(i in 1:length(Updated_senate_models_2018))
+{
+  
+}
+Updated_senate_models_2018 <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Senate_model_plus2018,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_presidential_models_trend <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Trend_presidential_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+Updated_senate_models_trend <- lapply(X = candidate_vector,
+                                      FUN = UpdateModel,
+                                      model_sheet = Trend_senate_model,
+                                      update_sheet = Updates_All,
+                                      region_pairs = state_pairs)
+
+names(Updated_presidential_models) <- candidate_vector
+names(Updated_senate_models) <- candidate_vector
+names(Updated_presidential_models_optimistic) <- candidate_vector
+names(Updated_senate_models_optimistic) <- candidate_vector
+
+names(Updated_presidential_models_pessimistic) <- candidate_vector
+names(Updated_senate_models_pessimistic) <- candidate_vector
+names(Updated_presidential_models_short) <- candidate_vector
+names(Updated_senate_models_short) <- candidate_vector
+names(Updated_presidential_models_2018) <- candidate_vector
+names(Updated_senate_models_2018) <- candidate_vector
+names(Updated_presidential_models_trend) <- candidate_vector
+names(Updated_senate_models_trend) <- candidate_vector
+for(i in 1:length(candidate_vector))
+{
+  Updated_senate_models[[i]] <- Updated_senate_models[[i]] %>% filter(Total.EV > 0)
+  Updated_senate_models_short[[i]] <- Updated_senate_models_short[[i]] %>% filter(Total.EV > 0)
+  Updated_senate_models_optimistic[[i]] <- Updated_senate_models_optimistic[[i]] %>% filter(Total.EV > 0)
+  Updated_senate_models_pessimistic[[i]] <- Updated_senate_models_pessimistic[[i]] %>% filter(Total.EV > 0)
+  Updated_senate_models_trend[[i]] <- Updated_senate_models_trend[[i]] %>% filter(Total.EV > 0)
+  Updated_senate_models_2018[[i]] <- Updated_senate_models_2018[[i]] %>% filter(Total.EV > 0)
+
+
+}
+#Save models to file (optional)
+
+```
+
+## Used in article.
+
+
+```{r echo=FALSE}
+states_compared <- c("Massachusetts","Colorado","Minnesota","Indiana","Delaware","Vermont")
+ggplot(Poll_summary,aes(x = Num_polls,y = Net_polling, label = Candidate))+
+  geom_point()+
+  geom_text_repel(size = 5)+
+  scale_y_continuous(labels = scales::percent)+
+  labs(x = "Number of polls", y = "Net bonus / penalty versus typical Democrat")
+ggplot(Poll_Effects %>% filter(Candidate %in% c("Joe Biden","Bernie Sanders","Elizabeth Warren","Pete Buttigieg")),
+       aes(x = Penalty,
+           y= Bonus,
+           alpha = Weight)) + 
+  geom_jitter()+
+  geom_abline(slope = 1)+
+  facet_wrap(~Candidate,nrow = 1)+
+  scale_x_continuous(labels = scales::percent)+
+  scale_y_continuous(labels = scales::percent)+
+  coord_equal()+
+  labs(title = "Performance in head to head polls, compared to typical Democrat in same poll")+
+  guides(alpha = FALSE)
+ggplot(comparison_sheet %>% filter(State %in% states_compared),aes(x = Against/Total, y = For/Total, label = paste0(Tag," ",Year), alpha = Year))+
+  geom_point() +
+  geom_abline(slope = 1) +
+  geom_text(data = comparison_sheet %>% filter(State %in% states_compared & Highlight == 1), aes(color = Candidate), size = 6) +
+  geom_point(data = comparison_sheet %>% filter(State %in% states_compared & Highlight == 1), aes(color = Candidate)) +
+  facet_wrap(~State) +
+  scale_y_continuous(labels = scales::percent, limits = c(0,1))+
+  scale_x_continuous(labels = scales::percent, limits = c(0,1))+
+  guides(alpha = FALSE,
+         color = FALSE)+
+  labs(x = "Votes against",y="Votes for",title = "Past election performances of Democratic contenders compared with other Democrats in the same state and year")
+#Presidential baseline models headline.
+p1 <- MapModel(Pessimistic_presidential_model,headline = "Most Republican")
+p2 <- MapModel(Short_presidential_model,headline = "Previous election")
+p3 <- MapModel(Base_presidential_model,headline = "Weighted average")
+p31 <- MapModel(Trend_presidential_model,headline = "Trend")
+p4 <- MapModel(Presidential_model_plus2018,headline = "2018 wave")
+p5 <- MapModel(Optimistic_presidential_model,headline = "Most Democratic")
+grid.arrange(p1,p2,p3,p31,p4,p5,
+             nrow = 1, 
+             top = textGrob("Presidential election models",gp = gpar(fontsize = 20,font = 3)))
+#Michael Bennet example
+grid.arrange(MapModel(Updated_presidential_models[["Michael Bennet"]],headline = "Michael Bennet"),
+             MapModel(Base_presidential_model,headline = "Baseline"),
+             nrow = 1, 
+             top = textGrob("Weighted average model",gp = gpar(fontsize = 20,font = 3)))
+Updates_All %>% filter(Candidate == "Michael Bennet") %>% datatable()
+#Candidates with many polls:
+grid.arrange(MapModel(Updated_presidential_models_short[["Joe Biden"]],headline = "Joe Biden"),
+             MapModel(Updated_presidential_models_short[["Bernie Sanders"]],headline = "Bernie Sanders"),
+             MapModel(Updated_presidential_models_short[["Elizabeth Warren"]],headline = "Elizabeth Warren"),
+             MapModel(Updated_presidential_models_short[["Pete Buttigieg"]],headline = "Pete Buttigieg"),
+             MapModel(Updated_presidential_models[["Joe Biden"]],headline = "Joe Biden"),
+             MapModel(Updated_presidential_models[["Bernie Sanders"]],headline = "Bernie Sanders"),
+             MapModel(Updated_presidential_models[["Elizabeth Warren"]],headline = "Elizabeth Warren"),
+             MapModel(Updated_presidential_models[["Pete Buttigieg"]],headline = "Pete Buttigieg"),
+             nrow = 2, 
+             top = textGrob("Previous election and weighted average models",gp = gpar(fontsize = 20,font = 3)))
+grid.arrange(MapModel(Updated_presidential_models_trend[["Joe Biden"]],headline = "Joe Biden"),
+             MapModel(Updated_presidential_models_trend[["Bernie Sanders"]],headline = "Bernie Sanders"),
+             MapModel(Updated_presidential_models_trend[["Elizabeth Warren"]],headline = "Elizabeth Warren"),
+             MapModel(Updated_presidential_models_trend[["Pete Buttigieg"]],headline = "Pete Buttigieg"),
+             MapModel(Updated_presidential_models_2018[["Joe Biden"]],headline = "Joe Biden"),
+             MapModel(Updated_presidential_models_2018[["Bernie Sanders"]],headline = "Bernie Sanders"),
+             MapModel(Updated_presidential_models_2018[["Elizabeth Warren"]],headline = "Elizabeth Warren"),
+             MapModel(Updated_presidential_models_2018[["Pete Buttigieg"]],headline = "Pete Buttigieg"),
+             nrow = 2, 
+             top = textGrob("Trend and 2018 wave models",gp = gpar(fontsize = 20,font = 3)))
+#Butti Beto comparison
+grid.arrange(MapModel(Updated_presidential_models_trend[["Beto O'Rourke"]],headline = "Beto O'Rourke"),
+             MapModel(Updated_presidential_models_trend[["Pete Buttigieg"]],headline = "Pete Buttigieg"),
+             nrow = 1, 
+             top = textGrob("Trend models",gp = gpar(fontsize = 20,font = 3)))
+# Experienced but not frequently-polled:
+# 
+grid.arrange(MapModel(Updated_presidential_models[["Amy Klobuchar"]],headline = "Amy Klobuchar"),
+             MapModel(Updated_presidential_models[["Michael Bennet"]],headline = "Michael Bennet"),
+             MapModel(Updated_presidential_models[["Deval Patrick"]],headline = "Deval Patrick"),
+             MapModel(Updated_presidential_models_trend[["Amy Klobuchar"]],headline = "Amy Klobuchar"),
+             MapModel(Updated_presidential_models_trend[["Michael Bennet"]],headline = "Michael Bennet"),
+             MapModel(Updated_presidential_models_trend[["Deval Patrick"]],headline = "Deval Patrick"),
+             nrow = 2, 
+             top = textGrob("Weighted average and trend models",gp = gpar(fontsize = 20,font = 3)))
+grid.arrange(MapModel(Updated_presidential_models_short[["Michael Bloomberg"]],headline = "Michael Bloomberg"),
+             MapModel(Updated_presidential_models_short[["Andrew Yang"]],headline = "Andrew Yang"),
+             MapModel(Updated_presidential_models_short[["Tulsi Gabbard"]],headline = "Tulsi Gabbard"),
+             MapModel(Updated_presidential_models_short[["Tom Steyer"]],headline = "Tom Steyer"),
+             MapModel(Updated_presidential_models_short[["John Delaney"]],headline = "John Delaney"),
+             MapModel(Updated_presidential_models_short[["Marianne Williamson"]],headline = "Marianne Williamson"),
+             MapModel(Updated_presidential_models[["Michael Bloomberg"]],headline = "Michael Bloomberg"),
+             MapModel(Updated_presidential_models[["Andrew Yang"]],headline = "Andrew Yang"),
+             MapModel(Updated_presidential_models[["Tulsi Gabbard"]],headline = "Tulsi Gabbard"),
+             MapModel(Updated_presidential_models[["Tom Steyer"]],headline = "Tom Steyer"),
+             MapModel(Updated_presidential_models[["John Delaney"]],headline = "John Delaney"),
+             MapModel(Updated_presidential_models[["Marianne Williamson"]],headline = "Marianne Williamson"),
+             nrow = 2, 
+             top = textGrob("Previous election and weighted average models",gp = gpar(fontsize = 20,font = 3)))
+
+s1 <- MapModel(Pessimistic_senate_model,33,30,2,headline = "Most Republican")
+s2 <- MapModel(Short_senate_model,33,30,2,headline = "Previous election")
+s3 <- MapModel(Base_senate_model,33,30,2,headline = "Weighted average")
+s31 <- MapModel(Trend_senate_model,33,30,2,headline = "Trend")
+
+s4 <- MapModel(Senate_model_plus2018,33,30,2,headline = "2018 wave")
+s5 <- MapModel(Optimistic_senate_model,33,30,2,headline = "Most Democratic")
+grid.arrange(s1,s2,s3,s31,s4,s5,
+             nrow = 1, 
+             top = textGrob("Senate election models",gp = gpar(fontsize = 20,font = 3)))
+grid.arrange(MapModel(Updated_senate_models_2018[["Joe Biden"]],headline = "Joe Biden",33,30,2),
+             MapModel(Updated_senate_models_2018[["Bernie Sanders"]],headline = "Bernie Sanders",33.5,30.5,1),
+             MapModel(Updated_senate_models_2018[["Elizabeth Warren"]],headline = "Elizabeth Warren",32.5,30.5,2),
+             MapModel(Updated_senate_models_2018[["Pete Buttigieg"]],headline = "Pete Buttigieg",33,30,2),
+             MapModel(Updated_senate_models_2018[["Amy Klobuchar"]],headline = "Amy Klobuchar",33,30,2),
+             MapModel(Updated_senate_models_2018[["Michael Bennet"]],headline = "Michael Bennet",33,30,2),
+             MapModel(Updated_senate_models_2018[["Deval Patrick"]],headline = "Deval Patrick",33,30,2),
+             MapModel(Senate_model_plus2018,headline = "Baseline model",33,30,2),
+             nrow = 2, 
+             top = textGrob("2018 wave models for the Senate",gp = gpar(fontsize = 20,font = 3)))
+
+```
+```{r echo=FALSE}
+
+large_simulation <- data.frame()
+for(i in 1:length(candidate_vector))
+{
+  candidate <- candidate_vector[[i]]
+  results_MD <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models_optimistic[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_MD$elec_id <- ceiling(as.numeric(row.names(results_MD))/51)
+  results_MD$Candidate <- candidate
+  results_MD$Model <- "Most Democratic"
+  results_MR <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models_pessimistic[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_MR$elec_id <- ceiling(as.numeric(row.names(results_MR))/51)
+  results_MR$Candidate <- candidate
+  results_MR$Model <- "Most Republican"
+
+  results_0 <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models_short[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_0$elec_id <- ceiling(as.numeric(row.names(results_0))/51)
+  results_0$Candidate <- candidate
+  results_0$Model <- "Previous election"
+
+  results_WA <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_WA$elec_id <- ceiling(as.numeric(row.names(results_WA))/51)
+  results_WA$Candidate <- candidate
+  results_WA$Model <- "Weighted average"
+
+  results_trend <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models_trend[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_trend$elec_id <- ceiling(as.numeric(row.names(results_trend))/51)
+  results_trend$Candidate <- candidate
+  results_trend$Model <- "Trend"
+
+  results_2018 <- data.frame(t(sapply(X = c(1:100),
+                               FUN = TweakModel,
+                               model_sheet = Updated_presidential_models_2018[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 100))) %>% unnest
+  results_2018$elec_id <- ceiling(as.numeric(row.names(results_2018))/51)
+  results_2018$Candidate <- candidate
+  results_2018$Model <- "2018 wave"
+
+  results <- bind_rows(results_MR,results_0,results_WA,results_trend,results_2018,results_MD)
+
+  large_simulation <- bind_rows(results,large_simulation)
+}
+candidate_summary_results <- large_simulation %>% group_by(Candidate,elec_id,Model) %>% summarise(Electoral.Votes = sum(Democratic.EV))
+
+candidate_summary_results$Candidate <- factor(candidate_summary_results$Candidate,
+                                              levels = (candidate_summary_results %>% 
+                                                  group_by(Candidate) %>%
+                                                  summarise(mean_EV = mean(Electoral.Votes)) %>% 
+                                                  arrange(-mean_EV))$Candidate)
+candidate_summary_results <- candidate_summary_results %>% filter(Candidate %in% c("Joe Biden",
+                                                      "Bernie Sanders",
+                                                      "Elizabeth Warren",
+                                                      "Pete Buttigieg",
+                                                      "Amy Klobuchar",
+                                                      "Michael Bennet",
+                                                      "Deval Patrick",
+                                                      "Cory Booker",
+                                                      "Beto O'Rourke",
+                                                      "Kamala Harris"))
+ggplot(candidate_summary_results,aes(x = Candidate, y = Electoral.Votes))+
+  geom_violin( fill = "blue", alpha = 0.5) +
+  geom_boxplot(alpha = 0.5, fill = "white") +
+  theme(axis.text.x = element_text(angle=45))+
+  geom_hline(yintercept = 270, color = "red", alpha = 0.5, size = 2) +
+  scale_y_continuous(limits = c(0,538),breaks = c(0,173,206,227,270,304,332,365,538),name = "Electoral Votes")
+
+```
+```{r echo=FALSE}
+
+large_senate_simulation <- data.frame()
+for(i in 1:length(candidate_vector))
+{
+  candidate <- candidate_vector[[i]]
+  results_sen <- data.frame(t(sapply(X = c(1:200),
+                               FUN = TweakModel,
+                               model_sheet = Updated_senate_models_2018[[candidate]],
+                               region_pairs = state_pairs,
+                               update_size = 0.05,update_weight = 200))) %>% unnest
+  results_sen$elec_id <- ceiling(as.numeric(row.names(results_sen))/51)
+  results_sen$Candidate <- candidatec
+  results_sen$Model <- "2018 wave"
+  large_senate_simulation <- bind_rows(large_senate_simulation,results_sen)
+}
+candidate_senate_results <- large_senate_simulation %>% group_by(Candidate,elec_id,Model) %>% summarise(Electoral.Votes = sum(Democratic.EV))
+candidate_senate_results <- candidate_senate_results %>%
+  mutate(Seats = 35 + Electoral.Votes - 0.5*(Candidate %in% c("Bernie Sanders","Elizabeth Warren")))
+
+candidate_senate_results$Candidate <- factor(candidate_senate_results$Candidate,
+                                              levels = (candidate_senate_results %>% 
+                                                  group_by(Candidate) %>%
+                                                  summarise(seats = median(Seats)+mean(Seats)) %>% 
+                                                  arrange(-seats))$Candidate)
+candidate_senate_results <- candidate_senate_results %>% filter(Candidate %in% c("Joe Biden",
+                                                      "Bernie Sanders",
+                                                      "Elizabeth Warren",
+                                                      "Pete Buttigieg",
+                                                      "Amy Klobuchar",
+                                                      "Michael Bennet",
+                                                      "Deval Patrick",
+                                                      "Cory Booker",
+                                                      "Beto O'Rourke",
+                                                      "Kamala Harris"))
+ggplot(candidate_senate_results,aes(x = Candidate, y = Seats))+
+  geom_violin( fill = "blue", alpha = 0.5) +
+  geom_boxplot(alpha = 0.5, fill = "white") +
+  theme(axis.text.x = element_text(angle=45))+
+  geom_hline(yintercept = 50, color = "red", alpha = 0.5, size = 2) +
+  scale_y_continuous(limits = c(33,67),breaks = c(33,40,50,60,67),name = "Senate seats")+
+  labs(title = "Distribution of Democratic + independent Senate seats in simulations")
+
+```

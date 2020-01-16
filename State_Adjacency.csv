@@ -1,0 +1,104 @@
+State1,State2
+Washington,Idaho
+Washington,Oregon
+Oregon,Idaho
+Oregon,Nevada
+Oregon,California
+California,Nevada
+California,Arizona
+Idaho,Montana
+Idaho,Wyoming
+Idaho,Utah
+Idaho,Nevada
+Nevada,Utah
+Nevada,Arizona
+Utah,Wyoming
+Utah,Colorado
+Utah,New Mexico
+Utah,Arizona
+Arizona,Colorado
+Arizona,New Mexico
+Montana,North Dakota
+Montana,South Dakota
+Wyoming,South Dakota
+Wyoming,Nebraska
+Wyoming,Colorado
+Colorado,Nebraska
+Colorado,Kansas
+Colorado,Oklahoma
+Colorado,New Mexico
+New Mexico,Oklahoma
+New Mexico,Texas
+North Dakota,Minnesota
+North Dakota,South Dakota
+South Dakota,Iowa
+South Dakota,Nebraska
+Nebraska,Iowa
+Nebraska,Missouri
+Nebraska,Kansas
+Kansas,Oklahoma
+Kansas,Missouri
+Oklahoma,Missouri
+Oklahoma,Arkansas
+Oklahoma,Texas
+Texas,Arkansas
+Texas,Louisiana
+Minnesota,Michigan
+Minnesota,Wisconsin
+Minnesota,Iowa
+Iowa,Wisconsin
+Iowa,Illinois
+Iowa,Missouri
+Missouri,Arkansas
+Missouri,Kentucky
+Missouri,Tennessee
+Arkansas,Mississippi
+Louisiana,Mississippi
+Wisconsin,Michigan
+Wisconsin,Illinois
+Illinois,Indiana
+Illinois,Kentucky
+Michigan,Indiana
+Michigan,Ohio
+Indiana,Ohio
+Indiana,Kentucky
+Kentucky,Tennessee
+Kentucky,Ohio
+Kentucky,West Virginia
+Kentucky,Virginia
+Tennessee,Virginia
+Tennessee,North Carolina
+Tennessee,Georgia
+Tennessee,Alabama
+Tennessee,Mississippi
+Mississippi,Alabama
+Alabama,Georgia
+Alabama,Florida
+Ohio,Pennsylvania
+Ohio,West Virginia
+Florida,Georgia
+Georgia,North Carolina
+Georgia,South Carolina
+South Carolina,North Carolina
+North Carolina,Virginia
+Virginia,West Virginia
+Virginia,Maryland
+Maryland,Delaware
+Maryland,Pennsylvania
+West Virginia,Pennsylvania
+Delaware,New Jersey
+Delaware,Pennsylvania
+Pennsylvania,New Jersey
+Pennsylvania,New York
+New Jersey,New York
+New York,Connecticut
+New York,Massachusetts
+New York,Vermont
+Connecticut,Massachusetts
+Connecticut,Rhode Island
+Massachusetts,Rhode Island
+Massachusetts,Vermont
+Massachusetts,New Hampshire
+Massachusetts,Maine
+Vermont,New Hampshire
+New Hampshire,Maine
