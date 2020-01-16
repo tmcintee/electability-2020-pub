@@ -6,4 +6,6 @@ You may wish to download and unzip a fresher copy from data.fivethirtyeight.com.
 
 The files in the root folder are formatted and copied from various sources purporting to provide official election returns. Election returns being government  Any errors are likely mine.
 
-For my model, I used senate and presidential data that is not included in this repository, because it came from David Leip's Atlas, available at https://uselectionatlas.org/ and relatively easily copied and pasted into the files on your own local branch.
+## Required additional data.
+
+For my model, I used senate and presidential data that is not included in this repository, because it came from David Leip's Atlas, available at https://uselectionatlas.org/ and relatively easily copied and pasted into the files on your own local branch. This data should be placed in the senate elections and presidential elections CSVs.
